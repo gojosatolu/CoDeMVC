@@ -26,7 +26,10 @@ class CausalReweightingModule(nn.Module):
         # For MLP features, x is already the context. 
         # If we wanted batch statistics we would pool over batch, but SE is usually per-instance.
         y = self.fc(x) 
-        return x * y   # Causal Reweighting
+        # Residual Causal Reweighting: z' = z * (1 + epsilon * y)
+        # This prevents the initial "shock" of feature filtering and stabilizes warmup.
+        epsilon = 0.1
+        return x * (1 + epsilon * y)
 
 # Encoder
 class Encoder(nn.Module):
@@ -112,3 +115,4 @@ class Network(nn.Module):
 
         H = self.feature_fusion(zs,zs_gradient)
         return xrs,zs,rs,H
+
