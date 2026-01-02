@@ -272,7 +272,7 @@ def contrastive_train(epoch):
             zs.append(model.encoders[v](xs[v]))
         
         # Apply causal module with dynamic counterfactual generation
-        s_list, s_cf_list, z_rec_list, z_cf_list = causal_module(zs, return_counterfactuals=use_cf)
+        c_list, c_cf_list, z_rec_list, z_cf_list = causal_module(zs, return_counterfactuals=use_cf)
         
         # View-consensus features and global fusion
         rs = []
@@ -294,8 +294,8 @@ def contrastive_train(epoch):
             loss_list.append(contrastiveloss(H, rs[v], w[v]))
             loss_list.append(mse(xs[v], xrs[v]))
         
-        # Causal losses (including Invariance Loss if s_cf_list is not None)
-        causal_loss = causal_contrastive_criterion(zs, s_list, s_cf_list, z_rec_list)
+        # Causal losses (including Invariance Loss if c_cf_list is not None)
+        causal_loss = causal_contrastive_criterion(zs, c_list, c_cf_list, z_rec_list)
         
         loss = sum(loss_list) + args.causal_weight * causal_loss
         loss.backward()
@@ -357,3 +357,4 @@ for i in range(T):
     nmis.append(best_nmi)
     purs.append(best_pur)
     print('The best clustering performace: ACC = {:.4f} NMI = {:.4f} PUR={:.4f}'.format(best_acc, best_nmi, best_pur))
+
