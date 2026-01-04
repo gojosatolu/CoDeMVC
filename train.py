@@ -35,7 +35,9 @@ parser.add_argument("--con_epochs", default=50, type=int)
 parser.add_argument("--feature_dim", default=64, type=int)
 parser.add_argument("--high_feature_dim", default=20, type=int)
 parser.add_argument("--temperature", default=1, type=float)
-parser.add_argument("--causal_weight", default=0.5, type=float, help="Weight for causal structure loss")
+parser.add_argument("--causal_weight", default=0.5, type=float, help="Overall weight for causal structure (Legacy, kept for backward compatibility)")
+parser.add_argument("--alpha", default=1.0, type=float, help="Weight for Disentanglement loss (Lrec + Lalign)")
+parser.add_argument("--beta", default=1.0, type=float, help="Weight for Invariance loss (Linv)")
 parser.add_argument("--no_counterfactual", action="store_true", help="Disable counterfactual augmentation")
 parser.add_argument("--no_crm", action="store_true", help="Disable Causal Reweighting Module (CRM)")
 args = parser.parse_args()
@@ -181,6 +183,36 @@ if args.dataset == "Animal":
     args.con_epochs = 50  # Fewer epochs needed for large data
     seed = 10
 
+if args.dataset == "Reuters-1200":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 10
+
+if args.dataset == "BBCSport":
+    args.batch_size = 128
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 42
+
+if args.dataset == "LandUse-21":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 10
+
+if args.dataset == "Scene-15":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 10
+
+if args.dataset == "WebKB":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 10
+
 def setup_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -228,7 +260,7 @@ def pretrain(epoch):
             zs.append(model.encoders[v](xs[v]))
         
         # Apply causal module - no counterfactuals during pretrain for stability
-        s_list, s_cf_list, z_rec_list, z_cf_list = causal_module(zs, return_counterfactuals=False)
+        c_list, c_cf_list, z_rec_list, z_cf_list = causal_module(zs, return_counterfactuals=False)
         
         # Decode (reconstruction)
         xrs = []
@@ -241,7 +273,8 @@ def pretrain(epoch):
             loss_list.append(criterion(xs[v], xrs[v]))
         
         # Causal losses (Reconstruction of Z + Content Consistency)
-        causal_loss = causal_contrastive_criterion(zs, s_list, s_cf_list, z_rec_list)
+        l_rec, l_inv, l_align = causal_contrastive_criterion(zs, c_list, c_cf_list, z_rec_list)
+        causal_loss = l_rec + l_inv + l_align
         
         loss = sum(loss_list) + args.causal_weight * causal_loss
         loss.backward()
@@ -269,7 +302,8 @@ def contrastive_train(epoch):
         # Encode features
         zs = []
         for v in range(view):
-            zs.append(model.encoders[v](xs[v]))
+            # Only apply CRM during formal training (when counterfactuals are used)
+            zs.append(model.encoders[v](xs[v], apply_crm=use_cf))
         
         # Apply causal module with dynamic counterfactual generation
         c_list, c_cf_list, z_rec_list, z_cf_list = causal_module(zs, return_counterfactuals=use_cf)
@@ -295,9 +329,13 @@ def contrastive_train(epoch):
             loss_list.append(mse(xs[v], xrs[v]))
         
         # Causal losses (including Invariance Loss if c_cf_list is not None)
-        causal_loss = causal_contrastive_criterion(zs, c_list, c_cf_list, z_rec_list)
+        # causal_contrastive_criterion now returns (loss_rec, loss_inv, loss_align)
+        l_rec, l_inv, l_align = causal_contrastive_criterion(zs, c_list, c_cf_list, z_rec_list)
         
+        # Unified Causal Loss: Sum of components multiplied by the master causal_weight
+        causal_loss = l_rec + l_inv + l_align
         loss = sum(loss_list) + args.causal_weight * causal_loss
+        
         loss.backward()
         optimizer.step()
         tot_loss += loss.item()
@@ -357,4 +395,6 @@ for i in range(T):
     nmis.append(best_nmi)
     purs.append(best_pur)
     print('The best clustering performace: ACC = {:.4f} NMI = {:.4f} PUR={:.4f}'.format(best_acc, best_nmi, best_pur))
+
+
 
