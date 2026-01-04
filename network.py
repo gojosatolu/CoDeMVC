@@ -48,9 +48,9 @@ class Encoder(nn.Module):
         if self.use_crm:
             self.crm = CausalReweightingModule(feature_dim)
 
-    def forward(self, x):
+    def forward(self, x, apply_crm=True):
         z = self.encoder(x)
-        if self.use_crm:
+        if self.use_crm and apply_crm:
             z = self.crm(z)
         return z
 
@@ -115,4 +115,5 @@ class Network(nn.Module):
 
         H = self.feature_fusion(zs,zs_gradient)
         return xrs,zs,rs,H
+
 
