@@ -185,33 +185,7 @@ class CausalContrastiveLoss(nn.Module):
                 
         loss_align /= (num_views * (num_views - 1) / 2)
 
-        # Total Causal Loss strategy - Dataset Adaptive Weights
-        # Three components balance different objectives:
-        # - loss_rec: Reconstruction quality (info preservation)
-        # - loss_inv: Invariance strength (robustness vs discriminability trade-off)
-        # - loss_align: Cross-view consistency (multi-view fusion)
-        
-        # Recommended configurations by dataset type:
-        # Type 1 - Structured Multi-View (MSRC-v1, Animal, NUS-WIDE):
-        #   Focus on cross-view consistency and moderate invariance
-        #   0.3 * rec + 0.5 * inv + 0.6 * align
-        
-        # Type 2 - Scene/Background-Heavy (OutdoorScene, Caltech):  
-        #   Need strong invariance to filter backgrounds
-        #   0.2 * rec + 0.8 * inv + 0.3 * align
-        
-        # Type 3 - Small Sample (MSRC-v1 when N<500):
-        #   Emphasize reconstruction to avoid overfitting
-        #   0.6 * rec + 0.2 * inv + 0.4 * align
-        
-        # Default: Balanced configuration for general multi-view datasets
-        # We restore these to stable values because extreme weights (like 1.0 for inv)
-        # cause catastrophic forgetting of clusters during the CF phase.
-        alpha_rec = 1.0  # Reconstruction weight
-        beta_inv = 1.0   # Invariance weight  
-        gamma_align = 1.0  # Cross-view consistency weight
-        
-        return alpha_rec * loss_rec + beta_inv * loss_inv + gamma_align * loss_align
+        return loss_rec, loss_inv, loss_align
 
 # Legacy class for compatibility if needed, but we don't use it
 class ViewInvarianceLoss(nn.Module):
@@ -219,6 +193,7 @@ class ViewInvarianceLoss(nn.Module):
         super().__init__()
     def forward(self, x):
         return torch.tensor(0.0)
+
 
 
 
