@@ -1,3 +1,7 @@
+
+
+
+
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch
@@ -213,6 +217,96 @@ if args.dataset == "WebKB":
     args.con_epochs = 100
     seed = 10
 
+if args.dataset == "STL10_4V":
+    args.batch_size = 256
+    args.learning_rate = 3e-3
+    args.con_epochs = 100
+    seed = 10
+
+if args.dataset == "Yale":
+    args.batch_size = 64
+    args.learning_rate = 1e-3
+    args.con_epochs = 200
+    seed = 10
+
+if args.dataset == "100Leaves":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 10
+
+if args.dataset == "Handwritten":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 200
+    seed = 10
+
+if args.dataset == "3Sources":
+    args.batch_size = 64
+    args.learning_rate = 1e-3
+    args.con_epochs = 200
+    seed = 10
+
+if args.dataset == "MNIST-10k":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 10
+
+if args.dataset == "MSRC-v5":
+    args.batch_size = 64
+    args.learning_rate = 1e-3
+    args.con_epochs = 200
+    seed = 10
+
+if args.dataset == "Reuters-1500":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 10
+
+if args.dataset == "UCI":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 10
+
+if args.dataset == "NUS-WIDE-OBJ":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 50
+    seed = 10
+
+if args.dataset == "ORL":
+    args.batch_size = 64
+    args.learning_rate = 1e-3
+    args.con_epochs = 200
+    seed = 10
+
+if args.dataset == "EYaleB":
+    args.batch_size = 64
+    args.learning_rate = 1e-3
+    args.con_epochs = 100 # Slightly larger than Yale, fewer epochs needed?
+    seed = 10
+
+if args.dataset == "FashionMNIST":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 100
+    seed = 10
+
+if args.dataset == "NottingHill":
+    args.batch_size = 64
+    args.learning_rate = 1e-3
+    args.con_epochs = 200
+    seed = 10
+
+if args.dataset == "YaleB":
+    args.batch_size = 256
+    args.learning_rate = 3e-4
+    args.con_epochs = 50
+    seed = 10
+
 def setup_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -274,9 +368,10 @@ def pretrain(epoch):
         
         # Causal losses (Reconstruction of Z + Content Consistency)
         l_rec, l_inv, l_align = causal_contrastive_criterion(zs, c_list, c_cf_list, z_rec_list)
-        causal_loss = l_rec + l_inv + l_align
+        # Pretrain only uses disentanglement (reconstruction), inv is 0 usually if no CF.
+        causal_loss_term = args.alpha * (l_rec + l_align) + args.beta * l_inv
         
-        loss = sum(loss_list) + args.causal_weight * causal_loss
+        loss = sum(loss_list) + causal_loss_term
         loss.backward()
         optimizer.step()
         tot_loss += loss.item()
@@ -332,9 +427,17 @@ def contrastive_train(epoch):
         # causal_contrastive_criterion now returns (loss_rec, loss_inv, loss_align)
         l_rec, l_inv, l_align = causal_contrastive_criterion(zs, c_list, c_cf_list, z_rec_list)
         
-        # Unified Causal Loss: Sum of components multiplied by the master causal_weight
-        causal_loss = l_rec + l_inv + l_align
-        loss = sum(loss_list) + args.causal_weight * causal_loss
+        # New weighted Sum:
+        # l_rec + l_align: Disentanglement quality -> Controlled by alpha
+        # l_inv: Robustness to style changes -> Controlled by beta
+        # We still keep args.causal_weight as a global toggle or legacy multiplier if needed, 
+        # but user request is to use alpha and beta strictly. 
+        # Assuming causal_weight might be passed as 1.0 or ignored in new script.
+        # But to be safe and clean, we use alpha/beta directly here.
+        
+        causal_loss_term = args.alpha * (l_rec + l_align) + args.beta * l_inv
+        
+        loss = sum(loss_list) + causal_loss_term
         
         loss.backward()
         optimizer.step()
@@ -395,6 +498,3 @@ for i in range(T):
     nmis.append(best_nmi)
     purs.append(best_pur)
     print('The best clustering performace: ACC = {:.4f} NMI = {:.4f} PUR={:.4f}'.format(best_acc, best_nmi, best_pur))
-
-
-
