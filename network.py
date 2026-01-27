@@ -116,4 +116,3 @@ class Network(nn.Module):
         H = self.feature_fusion(zs,zs_gradient)
         return xrs,zs,rs,H
 
-
