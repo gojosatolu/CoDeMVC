@@ -56,7 +56,7 @@ def valid(model, device, dataset, view, data_size, class_num, eval_h=False, epoc
             for v in range(view):
                 xs[v] = xs[v].to(device)
             
-            xrs, zs, rs, H = model(xs)
+            xrs, zs, rs, H, _ = model(xs)
             
             for v in range(view):
                 zs_list[v].append(zs[v].cpu().data.numpy())

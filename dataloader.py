@@ -816,6 +816,23 @@ class OneHundredLeaves(Dataset):
         return [torch.from_numpy(self.V1[idx]), torch.from_numpy(self.V2[idx]),
                 torch.from_numpy(self.V3[idx])], self.Y[idx], torch.from_numpy(np.array(idx)).long()
 
+class ProteinFold(Dataset):
+    def __init__(self, path):
+        data = scipy.io.loadmat(path + 'ProteinFold.mat')
+        self.Y = data['y'].flatten().astype(np.int32) - 1
+        scaler = MinMaxScaler()
+        self.views = []
+        for i in range(12):
+            v = data['X'][i][0].astype(np.float32)
+            if scipy.sparse.issparse(v): v = v.toarray()
+            self.views.append(scaler.fit_transform(v))
+
+    def __len__(self):
+        return self.views[0].shape[0]
+
+    def __getitem__(self, idx):
+        return [torch.from_numpy(self.views[i][idx]) for i in range(12)], self.Y[idx], torch.from_numpy(np.array(idx)).long()
+
 class Handwritten(Dataset):
     def __init__(self, path):
         data = scipy.io.loadmat(path + 'handwritten.mat')
@@ -916,6 +933,12 @@ def load_data(dataset):
         view = 3
         data_size = 551
         class_num = 4
+    elif dataset == "ProteinFold":
+        dataset = ProteinFold('./data/')
+        dims = [27] * 12
+        view = 12
+        data_size = 694
+        class_num = 27
     elif dataset == "Cifar10":
         dataset = cifar_10('./data/')
         dims = [512, 2048, 1024]

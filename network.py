@@ -2,38 +2,35 @@ import torch.nn as nn
 from torch.nn.functional import normalize
 import torch
 
-# Causal Reweighting Module (CRM)
-class CausalReweightingModule(nn.Module):
-    def __init__(self, channel, reduction=16):
-        super(CausalReweightingModule, self).__init__()
-        # 1. Squeeze: Global Context (Identity for MLP features as they are already global descriptors)
-        self.avg_pool = nn.AdaptiveAvgPool1d(1)
+# Causal Attention Proxy (replaces CRM)
+class FeatureCausalAttention(nn.Module):
+    def __init__(self, feature_dim, learnable_epsilon=False):
+        super(FeatureCausalAttention, self).__init__()
+        # Utilize learnable parameters to build proxy graphs of feature dependencies
+        self.Q = nn.Parameter(torch.randn(feature_dim, feature_dim))
+        self.K = nn.Parameter(torch.randn(feature_dim, feature_dim))
+        self.scale = feature_dim ** 0.5
         
-        # Ensure mid_channel is at least 1
-        mid_channel = max(channel // reduction, 1)
-
-        # 2. Excitation: Predict Causal Score
-        self.fc = nn.Sequential(
-            nn.Linear(channel, mid_channel, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(mid_channel, channel, bias=False),
-            nn.Sigmoid()
-        )
+        self.learnable_epsilon = learnable_epsilon
+        if self.learnable_epsilon:
+            self.epsilon = nn.Parameter(torch.tensor(0.1))
+        else:
+            self.epsilon = 0.1
 
     def forward(self, x):
-        # x: [Batch, Channel]
-        b, c = x.size()
-        # For MLP features, x is already the context. 
-        # If we wanted batch statistics we would pool over batch, but SE is usually per-instance.
-        y = self.fc(x) 
-        # Residual Causal Reweighting: z' = z * (1 + epsilon * y)
-        # This prevents the initial "shock" of feature filtering and stabilizes warmup.
-        epsilon = 0.1
-        return x * (1 + epsilon * y)
+        # x: [Batch, feature_dim]
+        # Attention Matrix A: [feature_dim, feature_dim]
+        A = torch.nn.functional.softmax(torch.matmul(self.Q, self.K.t()) / self.scale, dim=-1)
+        
+        # Message passing: Purify features based on causal relations
+        # Add residual connection to prevent initialization shock
+        z_causal = x + self.epsilon * torch.matmul(x, A)
+        
+        return z_causal, A
 
 # Encoder
 class Encoder(nn.Module):
-    def __init__(self, input_dim, feature_dim, use_crm=True):
+    def __init__(self, input_dim, feature_dim, use_crm=True, learnable_epsilon=False):
         super(Encoder, self).__init__()
         self.use_crm = use_crm
         self.encoder = nn.Sequential(
@@ -46,13 +43,16 @@ class Encoder(nn.Module):
             nn.Linear(2000, feature_dim),
         )
         if self.use_crm:
-            self.crm = CausalReweightingModule(feature_dim)
+            self.causal_attention = FeatureCausalAttention(feature_dim, learnable_epsilon=learnable_epsilon)
 
     def forward(self, x, apply_crm=True):
         z = self.encoder(x)
         if self.use_crm and apply_crm:
-            z = self.crm(z)
-        return z
+            z, A = self.causal_attention(z)
+        else:
+            # Phase 1 / Identity phase: Features do not interact causally
+            A = torch.eye(z.size(1)).to(z.device)
+        return z, A
 
 # Decoder
 class Decoder(nn.Module):
@@ -73,13 +73,13 @@ class Decoder(nn.Module):
 
 # SCMVC Network
 class Network(nn.Module):
-    def __init__(self, view, input_size, feature_dim, high_feature_dim, device, use_crm=True):
+    def __init__(self, view, input_size, feature_dim, high_feature_dim, device, use_crm=True, learnable_epsilon=False):
         super(Network, self).__init__()
         self.view = view
         self.encoders = nn.ModuleList([])
         self.decoders = nn.ModuleList([])
         for v in range(view):
-            self.encoders.append(Encoder(input_size[v], feature_dim, use_crm=use_crm).to(device))
+            self.encoders.append(Encoder(input_size[v], feature_dim, use_crm=use_crm, learnable_epsilon=learnable_epsilon).to(device))
             self.decoders.append(Decoder(input_size[v], feature_dim).to(device))
 
         # global features fusion layer
@@ -103,15 +103,17 @@ class Network(nn.Module):
         rs = []
         xrs = []
         zs = []
+        A_list = []
         for v in range(self.view):
             x = xs[v]
-            z = self.encoders[v](x)
+            z, A = self.encoders[v](x)
             xr = self.decoders[v](z)
             r = normalize(self.common_information_module(z),dim=1)
 
             rs.append(r)
             zs.append(z)
             xrs.append(xr)
+            A_list.append(A)
 
         H = self.feature_fusion(zs,zs_gradient)
-        return xrs,zs,rs,H
+        return xrs,zs,rs,H,A_list

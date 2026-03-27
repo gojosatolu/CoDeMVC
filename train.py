@@ -41,6 +41,7 @@ parser.add_argument("--alpha", default=1.0, type=float, help="Weight for Disenta
 parser.add_argument("--beta", default=1.0, type=float, help="Weight for Invariance loss (Linv)")
 parser.add_argument("--no_counterfactual", action="store_true", help="Disable counterfactual augmentation")
 parser.add_argument("--no_crm", action="store_true", help="Disable Causal Reweighting Module (CRM)")
+parser.add_argument("--learnable_epsilon", action="store_true", help="Make causal epsilon a learnable parameter")
 args = parser.parse_args()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -81,6 +82,12 @@ if args.dataset == "Prokaryotic":
     seed = 10000
 if args.dataset == "Synthetic3d":
     args.con_epochs = 100
+    seed = 100
+
+if args.dataset == "ProteinFold":
+    args.batch_size = 64
+    args.learning_rate = 1e-3
+    args.con_epochs = 50
     seed = 100
 
 # User added: Individual configuration for new datasets
@@ -348,7 +355,8 @@ def pretrain(epoch):
         # Encode first
         zs = []
         for v in range(view):
-            zs.append(model.encoders[v](xs[v]))
+            z_encoded, _ = model.encoders[v](xs[v], apply_crm=False)
+            zs.append(z_encoded)
         
         # Apply causal module - no counterfactuals during pretrain for stability
         c_list, c_cf_list, z_rec_list, z_cf_list = causal_module(zs, return_counterfactuals=False)
@@ -395,9 +403,12 @@ def contrastive_train(epoch):
         
         # Encode features
         zs = []
+        A_list = []
         for v in range(view):
-            # Only apply CRM during formal training (when counterfactuals are used)
-            zs.append(model.encoders[v](xs[v], apply_crm=use_cf))
+            # Only apply Causal Attention during formal training (when counterfactuals are used)
+            z_encoded, A_matrix = model.encoders[v](xs[v], apply_crm=use_cf)
+            zs.append(z_encoded)
+            A_list.append(A_matrix)
         
         # Apply causal module with dynamic counterfactual generation
         c_list, c_cf_list, z_rec_list, z_cf_list = causal_module(zs, return_counterfactuals=use_cf)
@@ -426,15 +437,17 @@ def contrastive_train(epoch):
         # causal_contrastive_criterion now returns (loss_rec, loss_inv, loss_align)
         l_rec, l_inv, l_align = causal_contrastive_criterion(zs, c_list, c_cf_list, z_rec_list)
         
-        # New weighted Sum:
-        # l_rec + l_align: Disentanglement quality -> Controlled by alpha
-        # l_inv: Robustness to style changes -> Controlled by beta
-        # We still keep args.causal_weight as a global toggle or legacy multiplier if needed, 
-        # but user request is to use alpha and beta strictly. 
-        # Assuming causal_weight might be passed as 1.0 or ignored in new script.
-        # But to be safe and clean, we use alpha/beta directly here.
+        # Innovation 2: Cross-View Mechanism Consistency
+        loss_consist = 0.
+        if use_cf:
+            for i in range(view):
+                for j in range(i + 1, view):
+                    loss_consist += torch.nn.functional.mse_loss(A_list[i], A_list[j])
         
-        causal_loss_term = args.alpha * (l_rec + l_align) + args.beta * l_inv
+        # New weighted Sum:
+        # Phase 1 Penalty (alpha): l_rec + l_align (Disentanglement quality)
+        # Phase 2 Penalty (beta): l_inv (Counterfactual Robustness) + loss_consist (Mechanism Consistency)
+        causal_loss_term = args.alpha * (l_rec + l_align) + args.beta * (l_inv + loss_consist)
         
         loss = sum(loss_list) + causal_loss_term
         
@@ -455,7 +468,7 @@ T = 1
 for i in range(T):
     print("ROUND:{}".format(i+1))
     setup_seed(seed)
-    model = Network(view, dims, args.feature_dim, args.high_feature_dim, device, use_crm=not args.no_crm)
+    model = Network(view, dims, args.feature_dim, args.high_feature_dim, device, use_crm=not args.no_crm, learnable_epsilon=args.learnable_epsilon)
     # model = model.to(device)
     # Initialize NEW causal module (Causal Contrastive Learning)
     causal_module = CausalDebiasedMultiViewClustering(
